@@ -48,8 +48,7 @@ static bool job_assign_client(YAAMP_JOB *job, YAAMP_CLIENT *client, double maxha
 		{
 			RETURN_ON_CONDITION(job->count > 0, false);
 
-			strncpy(client->extranonce1, remote->nonce1, sizeof(client->extranonce1)-1);
-			client->extranonce1[sizeof(client->extranonce1)-1] = '\0';
+			strcpy(client->extranonce1, remote->nonce1);
 			client->extranonce2size = 2;
 		}
 		else if(job->id != client->jobid_sent)
@@ -68,8 +67,8 @@ static bool job_assign_client(YAAMP_JOB *job, YAAMP_CLIENT *client, double maxha
 				RETURN_ON_CONDITION(i == YAAMP_JOB_MAXSUBIDS, false);
 			}
 
-			snprintf(client->extranonce1, sizeof(client->extranonce1),
-                     "%s%02x", remote->nonce1, client->extranonce1_id);
+			// safe snprintf to prevent overflow
+			snprintf(client->extranonce1, sizeof(client->extranonce1), "%s%02x", remote->nonce1, client->extranonce1_id);
 			client->extranonce2size = remote->nonce2size-1;
 			client->difficulty_remote = difficulty_remote;
 		}
@@ -78,8 +77,7 @@ static bool job_assign_client(YAAMP_JOB *job, YAAMP_CLIENT *client, double maxha
 	}
 	else
 	{
-		strncpy(client->extranonce1, client->extranonce1_default, sizeof(client->extranonce1)-1);
-		client->extranonce1[sizeof(client->extranonce1)-1] = '\0';
+		strcpy(client->extranonce1, client->extranonce1_default);
 		client->extranonce2size = client->extranonce2size_default;
 
 		// decred uses an extradata field in block header, 2 first uint32 are set by the miner
@@ -102,12 +100,10 @@ static bool job_assign_client(YAAMP_JOB *job, YAAMP_CLIENT *client, double maxha
 	{
 		if(!client->extranonce_subscribe)
 		{
-			strncpy(client->extranonce1_reconnect, client->extranonce1, sizeof(client->extranonce1_reconnect)-1);
-			client->extranonce1_reconnect[sizeof(client->extranonce1_reconnect)-1] = '\0';
+			strcpy(client->extranonce1_reconnect, client->extranonce1);
 			client->extranonce2size_reconnect = client->extranonce2size;
 
-			strncpy(client->extranonce1, client->extranonce1_default, sizeof(client->extranonce1)-1);
-			client->extranonce1[sizeof(client->extranonce1)-1] = '\0';
+			strcpy(client->extranonce1, client->extranonce1_default);
 			client->extranonce2size = client->extranonce2size_default;
 
 			client->reconnecting = true;
@@ -119,8 +115,7 @@ static bool job_assign_client(YAAMP_JOB *job, YAAMP_CLIENT *client, double maxha
 		}
 		else
 		{
-			strncpy(client->extranonce1_last, client->extranonce1, sizeof(client->extranonce1_last)-1);
-			client->extranonce1_last[sizeof(client->extranonce1_last)-1] = '\0';
+			strcpy(client->extranonce1_last, client->extranonce1);
 			client->extranonce2size_last = client->extranonce2size;
 
 			socket_send(client->sock, "{\"id\":null,\"method\":\"mining.set_extranonce\",\"params\":[\"%s\",%d]}\n",
@@ -129,11 +124,10 @@ static bool job_assign_client(YAAMP_JOB *job, YAAMP_CLIENT *client, double maxha
 	}
 
 	// ===== Version rolling applied to all algos =====
-	// Commented out if version_mask doesn't exist in YAAMP_CLIENT
-	// if(job->templ->version_rolling_allowed)
-	//	client->version_mask = job->templ->job_version;
-	// else
-	//	client->version_mask = 0;
+	if(job->templ->version_rolling_allowed)
+		client->version_mask = job->templ->job_version;
+	else
+		client->version_mask = 0;
 
 	return true;
 }
@@ -236,7 +230,6 @@ void *job_thread(void *p)
 		job_update();
 		pthread_cond_wait(&g_job_cond, &g_job_mutex);
 	}
-	CommonUnlock(&g_job_mutex);
 	return NULL;
 }
 
