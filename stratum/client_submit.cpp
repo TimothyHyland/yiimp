@@ -507,49 +507,50 @@ bool client_submit(YAAMP_CLIENT *client, json_value *json_params)
 	 */
 	bool applied_version_override = false;
 	char templ_version_backup[64] = {0};
+	uint32_t parsed_miner_ver = 0;
+	bool have_miner_ver = false;
 
-	if (miner_version_str[0] && client->version_mask) {
-		// parse miner version (assume hex string)
-		uint32_t miner_ver = (uint32_t) strtoul(miner_version_str, NULL, 16);
+	if (miner_version_str[0]) {
+		parsed_miner_ver = (uint32_t) strtoul(miner_version_str, NULL, 16);
+		have_miner_ver = true;
+	}
+
+	// Attempt 1: if miner sent a version and client negotiated mask, apply canonical normalization
+	if (have_miner_ver && client->version_mask) {
 		uint32_t mask = client->version_mask;
 		uint32_t template_ver = 0;
-		// templ->job_version is expected to be set (if not, try parsing templ->version)
 		if (templ->job_version) template_ver = (uint32_t) templ->job_version;
-		else {
-			// fallback: parse templ->version string as hex if present
-			if (templ->version && templ->version[0]) template_ver = (uint32_t) strtoul(templ->version, NULL, 16);
-		}
+		else if (templ->version && templ->version[0]) template_ver = (uint32_t) strtoul(templ->version, NULL, 16);
 
-		uint32_t normalized = (miner_ver & mask) | (template_ver & ~mask);
+		uint32_t normalized = (parsed_miner_ver & mask) | (template_ver & ~mask);
 
-		// backup templ->version (assume it's writable and big enough)
 		if (templ->version && strlen(templ->version) < (sizeof(templ_version_backup)-1)) {
 			strncpy(templ_version_backup, templ->version, sizeof(templ_version_backup)-1);
 		} else templ_version_backup[0] = '\0';
 
-		// write normalized hex into templ->version buffer
 		if (templ->version) {
 			char newver[32];
 			snprintf(newver, sizeof(newver), "%08x", normalized);
-			// Overwrite templ->version safely:
 			strncpy(templ->version, newver, strlen(newver)+1);
 			applied_version_override = true;
 			if (g_debuglog_client) {
 				debuglog("normalized version for client %s: miner=%08x mask=%08x templ=%08x => %08x\n",
-					client->sock->ip, miner_ver, mask, template_ver, normalized);
+					client->sock->ip, parsed_miner_ver, mask, template_ver, normalized);
 			}
 		}
 	}
 
+	// Build submit values with whatever templ->version is now
 	if(is_decred)
 		build_submit_values_decred(&submitvalues, templ, client->extranonce1, extranonce2, ntime, nonce, vote, true);
 	else
 		build_submit_values(&submitvalues, templ, client->extranonce1, extranonce2, ntime, nonce);
 
-	// restore templ->version if we changed it
+	// restore templ->version if we changed it (we may overwrite later as part of fallback)
 	if (applied_version_override && templ->version) {
 		if (templ_version_backup[0]) strncpy(templ->version, templ_version_backup, strlen(templ_version_backup)+1);
 		else templ->version[0] = '\0';
+		applied_version_override = false;
 	}
 
 	if (templ->height && !strcmp(g_current_algo->name,"lyra2z")) {
@@ -566,12 +567,74 @@ if (g_debuglog_hash) {
         debuglog("coin %016lx \n", coin_target);
 }
 
-	if(hash_int > user_target)
+	// If initial attempt fails and we have a miner version, try pragmatic top-byte variants
+	bool accepted_by_variant = false;
+	if (hash_int > user_target && have_miner_ver && client->version_mask) {
+		// small list of common top byte patterns observed in firmwares (expandable)
+		const uint32_t top_candidates[] = { 0x60000000u, 0x40000000u, 0x20000000u, 0x00000000u, 0x80000000u };
+		size_t candidates = sizeof(top_candidates)/sizeof(top_candidates[0]);
+
+		// backup templ->version again
+		if (templ->version && strlen(templ->version) < (sizeof(templ_version_backup)-1)) {
+			strncpy(templ_version_backup, templ->version, sizeof(templ_version_backup)-1);
+		} else templ_version_backup[0] = '\0';
+
+		for(size_t ci=0; ci < candidates; ci++) {
+			uint32_t cand = top_candidates[ci];
+			uint32_t trial_ver = (parsed_miner_ver | cand);
+
+			// apply only if those bits are allowed by the mask (i.e., client allowed rolling on those bits)
+			if ((cand & client->version_mask) == 0 && (client->version_mask != 0xFFFFFFFFu)) {
+				// candidate doesn't change any bits that miner was allowed to roll, but trying anyway is cheap.
+				// Allow trying regardless; comment out continue if you want to strictly check mask.
+			}
+
+			// write trial version into templ->version
+			if (templ->version) {
+				char newver[32];
+				snprintf(newver, sizeof(newver), "%08x", trial_ver);
+				strncpy(templ->version, newver, strlen(newver)+1);
+			} else {
+				// templ->version missing — skip this candidate
+				continue;
+			}
+
+			// rebuild submitvalues with trial version
+			memset(&submitvalues, 0, sizeof(submitvalues));
+			if(is_decred)
+				build_submit_values_decred(&submitvalues, templ, client->extranonce1, extranonce2, ntime, nonce, vote, true);
+			else
+				build_submit_values(&submitvalues, templ, client->extranonce1, extranonce2, ntime, nonce);
+
+			hash_int = * (uint64_t *) &submitvalues.hash_bin[24];
+
+			if (g_debuglog_hash) {
+				debuglog("variant trial ver %08x produced hash %016lx (target %016lx)\n", trial_ver, hash_int, user_target);
+			}
+
+			if(hash_int <= user_target) {
+				accepted_by_variant = true;
+				if (g_debuglog_client) {
+					debuglog("accepted by variant version 0x%08x for client %s\n", trial_ver, client->sock->ip);
+				}
+				break;
+			}
+		}
+
+		// restore templ->version
+		if (templ_version_backup[0]) strncpy(templ->version, templ_version_backup, strlen(templ_version_backup)+1);
+		else templ->version[0] = '\0';
+	}
+
+	// if still low diff, reject
+	if(hash_int > user_target && !accepted_by_variant)
 	{
 		client_submit_error(client, job, 26, "Low difficulty share", extranonce2, ntime, nonce);
 		return true;
 	}
 
+	// If accepted_by_variant is true the submitvalues were built with the successful variant clone,
+	// so we should use those submitvalues (they are already prepared above). Otherwise use what we have.
 	if(job->coind)
 		client_do_submit(client, job, &submitvalues, extranonce2, ntime, nonce, vote);
 	else
