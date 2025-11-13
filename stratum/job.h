@@ -69,10 +69,6 @@ struct YAAMP_JOB_TEMPLATE
 	unsigned int job_version;           // actual block version
 	unsigned int version_mask;          // bits allowed to roll
 	bool version_rolling_allowed;       // flag to allow ASICs to roll versions
-
-	// ===== Rolling parameters for timing control =====
-	time_t last_rolltime;               // timestamp of last roll
-	int roll_interval;                  // interval in seconds between allowed rolls
 };
 
 #define YAAMP_JOB_MAXSUBIDS 200
@@ -97,9 +93,6 @@ public:
 
 	// ===== Version rolling for client =====
 	unsigned int client_version_mask;   // mask sent to each miner
-
-	// ===== Rolling/time state for clients =====
-	time_t last_client_roll;            // last time this job rolled for clients
 };
 
 inline void job_delete(YAAMP_OBJECT *object)
@@ -142,27 +135,3 @@ vector<string> coind_aux_hashlist(YAAMP_COIND_AUX **auxs, int size);
 vector<string> coind_aux_merkle_branch(YAAMP_COIND_AUX **auxs, int size, int index);
 void coind_aux_build_auxs(YAAMP_JOB_TEMPLATE *templ);
 
-/////////////////////////////////////////////////////////////////////////////////////////////
-
-// ===== Version rolling helper functions =====
-inline bool job_allow_version_roll(YAAMP_JOB_TEMPLATE *templ)
-{
-	if(!templ) return false;
-	if(!templ->version_rolling_allowed) return false;
-
-	// optional time-based control
-	time_t now = time(NULL);
-	if(templ->roll_interval && now - templ->last_rolltime < templ->roll_interval)
-		return false;
-
-	templ->last_rolltime = now;
-	return true;
-}
-
-inline unsigned int job_apply_version_mask(YAAMP_JOB_TEMPLATE *templ, unsigned int miner_version)
-{
-	if(!templ) return miner_version;
-
-	// apply allowed rolling bits
-	return (miner_version & templ->version_mask) | (templ->job_version & ~templ->version_mask);
-}
