@@ -48,10 +48,10 @@ bool client_subscribe(YAAMP_CLIENT *client, json_value *json_params)
 			strncpy(client->version, json_params->u.array.values[0]->u.string.ptr, 1023);
 
 		if (strstr(client->version, "NiceHash"))
-      client->difficulty_actual = g_stratum_nicehash_difficulty;
+			client->difficulty_actual = g_stratum_nicehash_difficulty;
 
 		if(strstr(client->version, "proxy") || strstr(client->version, "/3."))
-      client->reconnectable = false;
+			client->reconnectable = false;
 
 		if(strstr(client->version, "ccminer")) client->stats = true;
 		if(strstr(client->version, "cpuminer-multi")) client->stats = true;
@@ -353,149 +353,6 @@ static bool client_store_stats(YAAMP_CLIENT *client, json_value *result)
 
 	return false;
 }
-
-///////////////////////////////////////////////////////////////////////////////////////////
-
-int client_workers_count(YAAMP_CLIENT *client)
-{
-	int count = 0;
-	if (!client || client->userid <= 0)
-		return count;
-
-	g_list_client.Enter();
-	for(CLI li = g_list_client.first; li; li = li->next)
-	{
-		YAAMP_CLIENT *cli = (YAAMP_CLIENT *)li->data;
-		if (cli->deleted) continue;
-		if (cli->userid == client->userid) count++;
-	}
-	g_list_client.Leave();
-
-	return count;
-}
-
-int client_workers_byaddress(const char *username)
-{
-	int count = 0;
-	if (!username || !strlen(username))
-		return count;
-
-	g_list_client.Enter();
-	for(CLI li = g_list_client.first; li; li = li->next)
-	{
-		YAAMP_CLIENT *cli = (YAAMP_CLIENT *)li->data;
-		if (cli->deleted) continue;
-		if (strcmp(cli->username, username) == 0) count++;
-	}
-	g_list_client.Leave();
-
-	return count;
-}
-
-bool client_auth_by_workers(YAAMP_CLIENT *client)
-{
-	if (!client || client->userid < 0)
-		return false;
-
-	g_list_client.Enter();
-	for(CLI li = g_list_client.first; li; li = li->next)
-	{
-		YAAMP_CLIENT *cli = (YAAMP_CLIENT *)li->data;
-		if (cli->deleted) continue;
-		if (client->userid) {
-			if(cli->userid == client->userid) {
-				client->coinid = cli->coinid;
-				break;
-			}
-		} else if (strcmp(cli->username, client->username) == 0) {
-			client->coinid = cli->coinid;
-			client->userid = cli->userid;
-			break;
-		}
-	}
-	g_list_client.Leave();
-
-	return (client->coinid > 0 && client->userid > 0);
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////
-
-//YAAMP_SOURCE *source_init(YAAMP_CLIENT *client)
-//{
-//	YAAMP_SOURCE *source = NULL;
-//	g_list_source.Enter();
-//
-//	for(CLI li = g_list_source.first; li; li = li->next)
-//	{
-//		YAAMP_SOURCE *source1 = (YAAMP_SOURCE *)li->data;
-//		if(!strcmp(source1->ip, client->sock->ip))
-//		{
-//			source = source1;
-//			break;
-//		}
-//	}
-//
-//	if(!source)
-//	{
-//		source = new YAAMP_SOURCE;
-//		memset(source, 0, sizeof(YAAMP_SOURCE));
-//
-//		strncpy(source->ip, client->sock->ip, 64);
-//		source->speed = 1;
-//
-//		g_list_source.AddTail(source);
-//	}
-//
-//	source->count++;
-//
-//	g_list_source.Leave();
-//	return source;
-//}
-//
-//void source_close(YAAMP_SOURCE *source)
-//{
-//	g_list_source.Enter();
-//	source->count--;
-//
-//	if(source->count <= 0)
-//	{
-//		g_list_source.Delete(source);
-//		delete source;
-//	}
-//
-//	g_list_source.Leave();
-//}
-//
-//void source_prune()
-//{
-////	debuglog("source_prune() %d\n", g_list_source.count);
-//	g_list_source.Enter();
-//	for(CLI li = g_list_source.first; li; li = li->next)
-//	{
-//		YAAMP_SOURCE *source = (YAAMP_SOURCE *)li->data;
-//		source->speed *= 0.8;
-//
-//		double idx = source->speed/source->count;
-//		if(idx < 0.0005)
-//		{
-//			stratumlog("disconnect all ip %s, %s, count %d, %f, %f\n", source->ip, g_current_algo->name, source->count, source->speed, idx);
-//			for(CLI li = g_list_client.first; li; li = li->next)
-//			{
-//				YAAMP_CLIENT *client = (YAAMP_CLIENT *)li->data;
-//				if(client->deleted) continue;
-//				if(!client->workerid) continue;
-//
-//				if(!strcmp(source->ip, client->sock->ip))
-//					shutdown(client->sock->sock, SHUT_RDWR);
-//			}
-//		}
-//
-//		else if(source->count > 500)
-//			stratumlog("over 500 ip %s, %s, %d, %f, %f\n", source->ip, g_current_algo->name, source->count, source->speed, idx);
-//	}
-//
-//	g_list_source.Leave();
-//}
 
 ///////////////////////////////////////////////////////////////////////////////////////////
 
