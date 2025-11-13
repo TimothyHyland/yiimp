@@ -1,27 +1,113 @@
 #include "stratum.h"
 
-//client->difficulty_remote = 0;
-//debuglog(" returning %x, %s, %s\n", job->id, client->sock->ip, #condition); \
+// global mutex/cond
+pthread_mutex_t g_job_mutex;
+pthread_cond_t g_job_cond;
 
-#define RETURN_ON_CONDITION(condition, ret) \
-	if(condition) \
-	{ \
-		return ret; \
+uint64_t lyra2z_height = 0;
+
+////////////////////////////////////////////////////////////////////////
+// Compute job version per client based on rolling settings
+static inline unsigned int compute_client_version(YAAMP_JOB_TEMPLATE *templ)
+{
+	if(!templ->version_rolling_allowed) return templ->job_version;
+
+	// roll allowed bits using version_mask
+	return templ->job_version | (templ->version_mask & 0xFF);
+}
+
+////////////////////////////////////////////////////////////////////////
+// Send job JSON to a client
+static void job_send_to_client(YAAMP_CLIENT *client, YAAMP_JOB *job)
+{
+	if(!client || !job || !client->sock) return;
+	if(!job->templ) return;
+
+	YAAMP_JOB_TEMPLATE *templ = job->templ;
+
+	unsigned int version = compute_client_version(templ);
+
+	// send standard stratum JSON (difficulty + notify)
+	socket_send(client->sock,
+		"[[[\"mining.set_difficulty\",\"%.3g\"],[\"mining.notify\",\"%s\"]],\"%s\",%d]",
+		client->difficulty_actual,
+		templ->claim_hex,
+		client->extranonce1,
+		client->extranonce2size);
+
+//	debuglog("job sent %x version %x to %s\n", job->id, version, client->sock->ip);
+}
+
+////////////////////////////////////////////////////////////////////////
+// Send last job to a client
+void job_send_last(YAAMP_CLIENT *client)
+{
+	if(!client || !client->jobid_sent) return;
+
+	g_list_job.Enter();
+	for(CLI li = g_list_job.first; li; li = li->next)
+	{
+		YAAMP_JOB *job = (YAAMP_JOB *)li->data;
+		if(job->id != client->jobid_sent) continue;
+
+		job_send_to_client(client, job);
+		break;
 	}
+	g_list_job.Leave();
+}
 
+////////////////////////////////////////////////////////////////////////
+// Broadcast a job to all clients
+void job_broadcast(YAAMP_JOB *job)
+{
+	if(!job) return;
+
+	g_list_client.Enter();
+	for(CLI li = g_list_client.first; li; li = li->next)
+	{
+		YAAMP_CLIENT *client = (YAAMP_CLIENT *)li->data;
+		if(client->deleted) continue;
+		if(!client->sock) continue;
+		if(!job_can_mine(job)) continue;
+
+		job_send_to_client(client, job);
+	}
+	g_list_client.Leave();
+}
+
+////////////////////////////////////////////////////////////////////////
+// Send job by ID to a client
+void job_send_jobid(YAAMP_CLIENT *client, int jobid)
+{
+	if(!client) return;
+
+	g_list_job.Enter();
+	for(CLI li = g_list_job.first; li; li = li->next)
+	{
+		YAAMP_JOB *job = (YAAMP_JOB *)li->data;
+		if(job->id != jobid) continue;
+
+		job_send_to_client(client, job);
+		break;
+	}
+	g_list_job.Leave();
+}
+
+////////////////////////////////////////////////////////////////////////
+// Assign a client to a job
 static bool job_assign_client(YAAMP_JOB *job, YAAMP_CLIENT *client, double maxhash)
 {
+	#define RETURN_ON_CONDITION(condition, ret) \
+		if(condition) { return ret; }
+
 	RETURN_ON_CONDITION(client->deleted, true);
 	RETURN_ON_CONDITION(client->jobid_next, true);
 	RETURN_ON_CONDITION(client->jobid_locked && client->jobid_locked != job->id, true);
 	RETURN_ON_CONDITION(client_find_job_history(client, job->id), true);
 	RETURN_ON_CONDITION(maxhash > 0 && job->speed + client->speed > maxhash, true);
 
-	if(!g_autoexchange && maxhash >= 0. && client->coinid != job->coind->id) {
-		//debuglog("prevent client %c on %s, not the right coin\n",
-		//	client->username[0], job->coind->symbol);
+	if(!g_autoexchange && maxhash >= 0. && client->coinid != job->coind->id)
 		return true;
-	}
 
 	if(job->remote)
 	{
@@ -49,7 +135,6 @@ static bool job_assign_client(YAAMP_JOB *job, YAAMP_CLIENT *client, double maxha
 		if(remote->nonce2size == 2)
 		{
 			RETURN_ON_CONDITION(job->count > 0, false);
-
 			strcpy(client->extranonce1, remote->nonce1);
 			client->extranonce2size = 2;
 		}
@@ -76,13 +161,11 @@ static bool job_assign_client(YAAMP_JOB *job, YAAMP_CLIENT *client, double maxha
 
 		client->jobid_locked = job->id;
 	}
-
 	else
 	{
 		strcpy(client->extranonce1, client->extranonce1_default);
 		client->extranonce2size = client->extranonce2size_default;
 
-		// decred uses an extradata field in block header, 2 first uint32 are set by the miner
 		if (g_current_algo->name && !strcmp(g_current_algo->name,"decred")) {
 			memset(client->extranonce1, '0', sizeof(client->extranonce1));
 			memcpy(&client->extranonce1[16], client->extranonce1_default, 8);
@@ -94,26 +177,9 @@ static bool job_assign_client(YAAMP_JOB *job, YAAMP_CLIENT *client, double maxha
 	}
 
 	client->jobid_next = job->id;
-
-	// ==== VERSION ROLLING LOGIC ====
-	if(job->templ && job->templ->version_rolling_allowed)
-	{
-		time_t now = time(NULL);
-		if(job->templ->roll_interval && now - job->templ->last_rolltime >= job->templ->roll_interval)
-		{
-			// rotate job version bits
-			job->templ->job_version = (job->templ->job_version + 1) & job->templ->version_mask | (job->templ->job_version & ~job->templ->version_mask);
-			job->templ->last_rolltime = now;
-
-			// propagate to client version mask
-			job->client_version_mask = job->templ->job_version & job->templ->version_mask;
-		}
-	}
-
 	job->speed += client->speed;
 	job->count++;
 
-//	debuglog(" assign %x, %f, %d, %s\n", job->id, client->speed, client->reconnecting, client->sock->ip);
 	if(strcmp(client->extranonce1, client->extranonce1_last) || client->extranonce2size != client->extranonce2size_last)
 	{
 		if(!client->extranonce_subscribe)
@@ -144,98 +210,56 @@ static bool job_assign_client(YAAMP_JOB *job, YAAMP_CLIENT *client, double maxha
 	return true;
 }
 
+////////////////////////////////////////////////////////////////////////
+// Assign all clients to a job
 void job_assign_clients(YAAMP_JOB *job, double maxhash)
 {
-	if (!job) return;
+	if(!job) return;
 
 	job->speed = 0;
 	job->count = 0;
 
 	g_list_client.Enter();
 
-	// pass0 locked
+	// pass0: locked
 	for(CLI li = g_list_client.first; li; li = li->next)
 	{
 		YAAMP_CLIENT *client = (YAAMP_CLIENT *)li->data;
 		if(client->jobid_locked && client->jobid_locked != job->id) continue;
 
-		bool b = job_assign_client(job, client, maxhash);
-		if(!b) break;
+		if(!job_assign_client(job, client, maxhash)) break;
 	}
 
-	// pass1 sent
+	// pass1: sent
 	for(CLI li = g_list_client.first; li; li = li->next)
 	{
 		YAAMP_CLIENT *client = (YAAMP_CLIENT *)li->data;
 		if(client->jobid_sent != job->id) continue;
 
-		bool b = job_assign_client(job, client, maxhash);
-		if(!b) break;
+		if(!job_assign_client(job, client, maxhash)) break;
 	}
 
-	// pass2 extranonce_subscribe
-	if(job->remote)	for(CLI li = g_list_client.first; li; li = li->next)
+	// pass2: extranonce_subscribe
+	if(job->remote) for(CLI li = g_list_client.first; li; li = li->next)
 	{
 		YAAMP_CLIENT *client = (YAAMP_CLIENT *)li->data;
 		if(!client->extranonce_subscribe) continue;
 
-		bool b = job_assign_client(job, client, maxhash);
-		if(!b) break;
+		if(!job_assign_client(job, client, maxhash)) break;
 	}
 
-	// pass3 the rest
+	// pass3: rest
 	for(CLI li = g_list_client.first; li; li = li->next)
 	{
 		YAAMP_CLIENT *client = (YAAMP_CLIENT *)li->data;
-
-		bool b = job_assign_client(job, client, maxhash);
-		if(!b) break;
+		if(!job_assign_client(job, client, maxhash)) break;
 	}
 
 	g_list_client.Leave();
 }
 
-void job_assign_clients_left(double factor)
-{
-	bool b;
-	for(CLI li = g_list_coind.first; li; li = li->next)
-	{
-		if(!job_has_free_client()) return;
-
-		YAAMP_COIND *coind = (YAAMP_COIND *)li->data;
-		if(!coind_can_mine(coind)) continue;
-		if(!coind->job) continue;
-
-		double nethash = coind_nethash(coind);
-		g_list_client.Enter();
-
-		for(CLI li = g_list_client.first; li; li = li->next)
-		{
-			YAAMP_CLIENT *client = (YAAMP_CLIENT *)li->data;
-			if (!g_autoexchange) {
-				if (client->coinid == coind->id)
-					factor = 100.;
-				else
-					factor = 0.;
-			}
-
-			//debuglog("%s %s factor %f nethash %.3f\n", coind->symbol, client->username, factor, nethash);
-
-			if (factor > 0.) {
-				b = job_assign_client(coind->job, client, nethash*factor);
-				if(!b) break;
-			}
-		}
-
-		g_list_client.Leave();
-	}
-}
-
 ////////////////////////////////////////////////////////////////////////
-
-pthread_mutex_t g_job_mutex;
-pthread_cond_t g_job_cond;
-
+// Thread functions
 void *job_thread(void *p)
 {
 	CommonLock(&g_job_mutex);
@@ -262,12 +286,11 @@ void job_signal()
 	CommonUnlock(&g_job_mutex);
 }
 
+////////////////////////////////////////////////////////////////////////
+// Main job update logic
 void job_update()
 {
-//	debuglog("job_update()\n");
 	job_reset_clients();
-
-	//////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	g_list_job.Enter();
 	job_sort();
@@ -299,19 +322,16 @@ void job_update()
 
 	////////////////////////////////////////////////////////////////////////////////////////////////
 
+	// catch clients without jobs
 	g_list_client.Enter();
 	for(CLI li = g_list_client.first; li; li = li->next)
 	{
 		YAAMP_CLIENT *client = (YAAMP_CLIENT *)li->data;
-		if(client->deleted) continue;
-		if(client->jobid_next) continue;
+		if(client->deleted || client->jobid_next) continue;
 
-		debuglog("clients with no job\n");
 		g_current_algo->overflow = true;
 
 		if(!g_list_coind.first) break;
-
-		// here: todo: choose first can mine
 
 		YAAMP_COIND *coind = (YAAMP_COIND *)g_list_coind.first->data;
 		if(!coind) break;
@@ -322,11 +342,10 @@ void job_update()
 
 		break;
 	}
-
 	g_list_client.Leave();
 
 	////////////////////////////////////////////////////////////////////////////////////////////////
-
+	// broadcast jobs
 	g_list_job.Enter();
 	for(CLI li = g_list_job.first; li; li = li->next)
 	{
@@ -335,7 +354,5 @@ void job_update()
 
 		job_broadcast(job);
 	}
-
 	g_list_job.Leave();
-
 }
