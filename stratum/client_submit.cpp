@@ -1,4 +1,3 @@
-
 #include "stratum.h"
 
 uint64_t lyra2z_height = 0;
@@ -375,6 +374,7 @@ bool client_submit(YAAMP_CLIENT *client, json_value *json_params)
 	char nonce[80] = { 0 };
 	char ntime[32] = { 0 };
 	char vote[8] = { 0 };
+	char miner_version_str[64] = {0};
 
 	if (strlen(json_params->u.array.values[1]->u.string.ptr) > 32) {
 		clientlog(client, "bad json, wrong jobid len");
@@ -391,21 +391,27 @@ bool client_submit(YAAMP_CLIENT *client, json_value *json_params)
 	string_lower(ntime);
 	string_lower(nonce);
 
+	// optional 6th param: miner-supplied version (hex string, e.g. "0044e000")
+	if (json_params->u.array.length >= 6 && json_params->u.array.values[5]->u.string.ptr) {
+		strncpy(miner_version_str, json_params->u.array.values[5]->u.string.ptr, sizeof(miner_version_str)-1);
+		string_lower(miner_version_str);
+	}
+
 	if (json_params->u.array.length == 6) {
 		if (strstr(g_stratum_algo, "phi")) {
 			// lux optional field, smart contral root hashes (not mandatory on shares submit)
 			strncpy(extra, json_params->u.array.values[5]->u.string.ptr, 128);
 			string_lower(extra);
 		} else {
-			// heavycoin vote
+			// heavycoin vote (but if miner_version used, previous branch took it)
 			strncpy(vote, json_params->u.array.values[5]->u.string.ptr, 7);
 			string_lower(vote);
 		}
 	}
 
 	if (g_debuglog_hash) {
-		debuglog("submit %s (uid %d) %d, %s, t=%s, n=%s, extra=%s\n", client->sock->ip, client->userid,
-			jobid, extranonce2, ntime, nonce, extra);
+		debuglog("submit %s (uid %d) %d, %s, t=%s, n=%s, extra=%s ver=%s\n", client->sock->ip, client->userid,
+			jobid, extranonce2, ntime, nonce, extra, miner_version_str);
 	}
 
 	YAAMP_JOB *job = (YAAMP_JOB *)object_find(&g_list_job, jobid, true);
@@ -491,10 +497,60 @@ bool client_submit(YAAMP_CLIENT *client, json_value *json_params)
 	YAAMP_JOB_VALUES submitvalues;
 	memset(&submitvalues, 0, sizeof(submitvalues));
 
+	/*
+	 * Version-rolling normalization:
+	 * If miner provided a version and client negotiated a version_mask, use:
+	 * normalized = (miner & mask) | (template_job_version & ~mask)
+	 * Then temporarily override templ->version with formatted normalized hex before building values.
+	 *
+	 * Note: templ->job_version must be populated by job creation code.
+	 */
+	bool applied_version_override = false;
+	char templ_version_backup[64] = {0};
+
+	if (miner_version_str[0] && client->version_mask) {
+		// parse miner version (assume hex string)
+		uint32_t miner_ver = (uint32_t) strtoul(miner_version_str, NULL, 16);
+		uint32_t mask = client->version_mask;
+		uint32_t template_ver = 0;
+		// templ->job_version is expected to be set (if not, try parsing templ->version)
+		if (templ->job_version) template_ver = (uint32_t) templ->job_version;
+		else {
+			// fallback: parse templ->version string as hex if present
+			if (templ->version && templ->version[0]) template_ver = (uint32_t) strtoul(templ->version, NULL, 16);
+		}
+
+		uint32_t normalized = (miner_ver & mask) | (template_ver & ~mask);
+
+		// backup templ->version (assume it's writable and big enough)
+		if (templ->version && strlen(templ->version) < (sizeof(templ_version_backup)-1)) {
+			strncpy(templ_version_backup, templ->version, sizeof(templ_version_backup)-1);
+		} else templ_version_backup[0] = '\0';
+
+		// write normalized hex into templ->version buffer
+		if (templ->version) {
+			char newver[32];
+			snprintf(newver, sizeof(newver), "%08x", normalized);
+			// Overwrite templ->version safely:
+			strncpy(templ->version, newver, strlen(newver)+1);
+			applied_version_override = true;
+			if (g_debuglog_client) {
+				debuglog("normalized version for client %s: miner=%08x mask=%08x templ=%08x => %08x\n",
+					client->sock->ip, miner_ver, mask, template_ver, normalized);
+			}
+		}
+	}
+
 	if(is_decred)
 		build_submit_values_decred(&submitvalues, templ, client->extranonce1, extranonce2, ntime, nonce, vote, true);
 	else
 		build_submit_values(&submitvalues, templ, client->extranonce1, extranonce2, ntime, nonce);
+
+	// restore templ->version if we changed it
+	if (applied_version_override && templ->version) {
+		if (templ_version_backup[0]) strncpy(templ->version, templ_version_backup, strlen(templ_version_backup)+1);
+		else templ->version[0] = '\0';
+	}
 
 	if (templ->height && !strcmp(g_current_algo->name,"lyra2z")) {
 		lyra2z_height = templ->height;
