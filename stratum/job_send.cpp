@@ -27,8 +27,9 @@ static void job_mining_notify_buffer(YAAMP_JOB *job, char *buffer)
 			job->id, templ->prevhash_be, templ->claim_be, templ->coinb1, templ->coinb2,
 			templ->txmerkles, version_hex, templ->nbits, templ->ntime);
 		return;
-	} else if (strlen(templ->extradata_hex) == 128) {
-		// LUX / lbry-like smart contract extra data
+	} 
+	else if (strlen(templ->extradata_hex) == 128) {
+		// LUX smart contract state hashes (like lbry extra field, here the 2 root hashes in one)
 		sprintf(buffer, "{\"id\":null,\"method\":\"mining.notify\",\"params\":["
 			"\"%x\",\"%s\",\"%s\",\"%s\",\"%s\",[%s],\"%s\",\"%s\",\"%s\",true]}\n",
 			job->id, templ->prevhash_be, templ->extradata_be, templ->coinb1, templ->coinb2,
@@ -58,6 +59,8 @@ static YAAMP_JOB *job_get_last(int coinid)
 	return NULL;
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 void job_send_last(YAAMP_CLIENT *client)
 {
 #ifdef NO_EXCHANGE
@@ -68,7 +71,6 @@ void job_send_last(YAAMP_CLIENT *client)
 #endif
 	if(!job) return;
 
-	YAAMP_JOB_TEMPLATE *templ = job->templ;
 	client->jobid_sent = job->id;
 
 	char buffer[YAAMP_SMALLBUFSIZE];
@@ -89,12 +91,13 @@ void job_send_jobid(YAAMP_CLIENT *client, int jobid)
 	char buffer[YAAMP_SMALLBUFSIZE];
 	job_mining_notify_buffer(job, buffer);
 
-	YAAMP_JOB_TEMPLATE *templ = job->templ;
 	client->jobid_sent = job->id;
 
 	socket_send_raw(client->sock, buffer, strlen(buffer));
 	object_unlock(job);
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void job_broadcast(YAAMP_JOB *job)
 {
@@ -103,8 +106,6 @@ void job_broadcast(YAAMP_JOB *job)
 	struct timeval timeout;
 	timeout.tv_sec = 0;
 	timeout.tv_usec = 100000;
-
-	YAAMP_JOB_TEMPLATE *templ = job->templ;
 
 	char buffer[YAAMP_SMALLBUFSIZE];
 	job_mining_notify_buffer(job, buffer);
@@ -147,11 +148,10 @@ void job_broadcast(YAAMP_JOB *job)
 	int s2 = current_timestamp_dms();
 	if(!count) return;
 
-	uint64_t coin_target = decode_compact(templ->nbits);
-	if (templ->nbits && !coin_target) coin_target = 0xFFFF000000000000ULL;
+	uint64_t coin_target = decode_compact(job->templ->nbits);
+	if (job->templ->nbits && !coin_target) coin_target = 0xFFFF000000000000ULL;
 	double coin_diff = target_to_diff(coin_target);
 
 	debuglog("%s %d - diff %.9f job %x to %d/%d/%d clients, hash %.3f/%.3f in %.1f ms\n", job->name,
-		templ->height, coin_diff, job->id, count, job->count, g_list_client.count, job->speed, job->maxspeed, 0.1*(s2-s1));
+		job->templ->height, coin_diff, job->id, count, job->count, g_list_client.count, job->speed, job->maxspeed, 0.1*(s2-s1));
 }
-
