@@ -360,6 +360,69 @@ static bool valid_string_params(json_value *json_params)
 	return true;
 }
 
+/*
+ * Helper: attempt to rebuild header/hash using a candidate version.
+ * Returns true and updates submitvalues.hash_bin/hash_hex/hash_be/header_be/header_bin
+ * if the trial produced a hash <= user_target.
+ */
+static bool try_variant_with_version(YAAMP_JOB_TEMPLATE *templ, YAAMP_JOB_VALUES *submitvalues, uint32_t trial_version, uint64_t user_target)
+{
+	// save original header
+	char orig_header[1024];
+	strncpy(orig_header, submitvalues->header, sizeof(orig_header)-1);
+	orig_header[sizeof(orig_header)-1] = '\0';
+
+	// format version as 8 hex chars (lowercase)
+	char vhex[16];
+	snprintf(vhex, sizeof(vhex), "%08x", trial_version);
+
+	// replace the first 8 chars of header (templ->version location)
+	if(strlen(submitvalues->header) >= 8) {
+		memcpy(submitvalues->header, vhex, 8);
+		submitvalues->header[8] = '\0'; // keep rest intact by writing next below
+		// append the rest from original (starting at pos 8)
+		strncat(submitvalues->header, &orig_header[8], sizeof(submitvalues->header) - strlen(submitvalues->header) - 1);
+	} else {
+		// something odd, restore and fail
+		strncpy(submitvalues->header, orig_header, sizeof(submitvalues->header)-1);
+		return false;
+	}
+
+	// recompute header_be / header_bin / hash
+	int header_words = (int)(strlen(submitvalues->header)/2/4);
+	if(header_words < 1) header_words = 20; // fallback
+	ser_string_be(submitvalues->header, submitvalues->header_be, header_words);
+
+	// rebuild header bin and hash
+	binlify(submitvalues->header_bin, submitvalues->header_be);
+	int header_len = strlen(submitvalues->header)/2;
+	g_current_algo->hash_function((char *)submitvalues->header_bin, (char *)submitvalues->hash_bin, header_len);
+	hexlify(submitvalues->hash_hex, submitvalues->hash_bin, 32);
+	string_be(submitvalues->hash_hex, submitvalues->hash_be);
+
+	uint64_t trial_hash_int = *(uint64_t *)&submitvalues->hash_bin[24];
+	if (g_debuglog_hash) {
+		debuglog("try_variant_with_version trial %08x -> hash %016lx target %016lx\n", trial_version, trial_hash_int, user_target);
+	}
+
+	// restore header to original (we will update it if accepted)
+	if(trial_hash_int <= user_target) {
+		// accepted: leave updated submitvalues fields as-is
+		return true;
+	}
+
+	// not accepted: restore original header & hash and return false
+	strncpy(submitvalues->header, orig_header, sizeof(submitvalues->header)-1);
+	ser_string_be(submitvalues->header, submitvalues->header_be, header_words);
+	binlify(submitvalues->header_bin, submitvalues->header_be);
+	header_len = strlen(submitvalues->header)/2;
+	g_current_algo->hash_function((char *)submitvalues->header_bin, (char *)submitvalues->hash_bin, header_len);
+	hexlify(submitvalues->hash_hex, submitvalues->hash_bin, 32);
+	string_be(submitvalues->hash_hex, submitvalues->hash_be);
+
+	return false;
+}
+
 bool client_submit(YAAMP_CLIENT *client, json_value *json_params)
 {
 	// submit(worker_name, jobid, extranonce2, ntime, nonce):
@@ -374,7 +437,6 @@ bool client_submit(YAAMP_CLIENT *client, json_value *json_params)
 	char nonce[80] = { 0 };
 	char ntime[32] = { 0 };
 	char vote[8] = { 0 };
-	char miner_version_str[64] = {0};
 
 	if (strlen(json_params->u.array.values[1]->u.string.ptr) > 32) {
 		clientlog(client, "bad json, wrong jobid len");
@@ -391,27 +453,34 @@ bool client_submit(YAAMP_CLIENT *client, json_value *json_params)
 	string_lower(ntime);
 	string_lower(nonce);
 
-	// optional 6th param: miner-supplied version (hex string, e.g. "0044e000")
-	if (json_params->u.array.length >= 6 && json_params->u.array.values[5]->u.string.ptr) {
-		strncpy(miner_version_str, json_params->u.array.values[5]->u.string.ptr, sizeof(miner_version_str)-1);
-		string_lower(miner_version_str);
-	}
-
-	if (json_params->u.array.length == 6) {
-		if (strstr(g_stratum_algo, "phi")) {
-			// lux optional field, smart contral root hashes (not mandatory on shares submit)
-			strncpy(extra, json_params->u.array.values[5]->u.string.ptr, 128);
-			string_lower(extra);
+	// NEW: detect optional miner-supplied ver param when present as 8-hex string
+	bool have_miner_ver = false;
+	uint32_t miner_ver = 0;
+	if (json_params->u.array.length >= 6 && json_is_string(json_params->u.array.values[5])) {
+		const char *sixth = json_params->u.array.values[5]->u.string.ptr;
+		if (sixth && strlen(sixth) == 8 && ishexa(sixth, 8)) {
+			// treat this as miner version
+			have_miner_ver = true;
+			miner_ver = (uint32_t) strtoul(sixth, NULL, 16);
 		} else {
-			// heavycoin vote (but if miner_version used, previous branch took it)
-			strncpy(vote, json_params->u.array.values[5]->u.string.ptr, 7);
-			string_lower(vote);
+			// existing behaviour: phi extra or heavycoin vote
+			if (json_params->u.array.length == 6) {
+				if (strstr(g_stratum_algo, "phi")) {
+					// lux optional field, smart contral root hashes (not mandatory on shares submit)
+					strncpy(extra, json_params->u.array.values[5]->u.string.ptr, 128);
+					string_lower(extra);
+				} else {
+					// heavycoin vote
+					strncpy(vote, json_params->u.array.values[5]->u.string.ptr, 7);
+					string_lower(vote);
+				}
+			}
 		}
 	}
 
 	if (g_debuglog_hash) {
-		debuglog("submit %s (uid %d) %d, %s, t=%s, n=%s, extra=%s ver=%s\n", client->sock->ip, client->userid,
-			jobid, extranonce2, ntime, nonce, extra, miner_version_str);
+		debuglog("submit %s (uid %d) %d, %s, t=%s, n=%s, extra=%s\n", client->sock->ip, client->userid,
+			jobid, extranonce2, ntime, nonce, extra);
 	}
 
 	YAAMP_JOB *job = (YAAMP_JOB *)object_find(&g_list_job, jobid, true);
@@ -497,61 +566,10 @@ bool client_submit(YAAMP_CLIENT *client, json_value *json_params)
 	YAAMP_JOB_VALUES submitvalues;
 	memset(&submitvalues, 0, sizeof(submitvalues));
 
-	/*
-	 * Version-rolling normalization:
-	 * If miner provided a version and client negotiated a version_mask, use:
-	 * normalized = (miner & mask) | (template_job_version & ~mask)
-	 * Then temporarily override templ->version with formatted normalized hex before building values.
-	 *
-	 * Note: templ->job_version must be populated by job creation code.
-	 */
-	bool applied_version_override = false;
-	char templ_version_backup[64] = {0};
-	uint32_t parsed_miner_ver = 0;
-	bool have_miner_ver = false;
-
-	if (miner_version_str[0]) {
-		parsed_miner_ver = (uint32_t) strtoul(miner_version_str, NULL, 16);
-		have_miner_ver = true;
-	}
-
-	// Attempt 1: if miner sent a version and client negotiated mask, apply canonical normalization
-	if (have_miner_ver && client->version_mask) {
-		uint32_t mask = client->version_mask;
-		uint32_t template_ver = 0;
-		if (templ->job_version) template_ver = (uint32_t) templ->job_version;
-		else if (templ->version && templ->version[0]) template_ver = (uint32_t) strtoul(templ->version, NULL, 16);
-
-		uint32_t normalized = (parsed_miner_ver & mask) | (template_ver & ~mask);
-
-		if (templ->version && strlen(templ->version) < (sizeof(templ_version_backup)-1)) {
-			strncpy(templ_version_backup, templ->version, sizeof(templ_version_backup)-1);
-		} else templ_version_backup[0] = '\0';
-
-		if (templ->version) {
-			char newver[32];
-			snprintf(newver, sizeof(newver), "%08x", normalized);
-			strncpy(templ->version, newver, strlen(newver)+1);
-			applied_version_override = true;
-			if (g_debuglog_client) {
-				debuglog("normalized version for client %s: miner=%08x mask=%08x templ=%08x => %08x\n",
-					client->sock->ip, parsed_miner_ver, mask, template_ver, normalized);
-			}
-		}
-	}
-
-	// Build submit values with whatever templ->version is now
 	if(is_decred)
 		build_submit_values_decred(&submitvalues, templ, client->extranonce1, extranonce2, ntime, nonce, vote, true);
 	else
 		build_submit_values(&submitvalues, templ, client->extranonce1, extranonce2, ntime, nonce);
-
-	// restore templ->version if we changed it (we may overwrite later as part of fallback)
-	if (applied_version_override && templ->version) {
-		if (templ_version_backup[0]) strncpy(templ->version, templ_version_backup, strlen(templ_version_backup)+1);
-		else templ->version[0] = '\0';
-		applied_version_override = false;
-	}
 
 	if (templ->height && !strcmp(g_current_algo->name,"lyra2z")) {
 		lyra2z_height = templ->height;
@@ -567,74 +585,63 @@ if (g_debuglog_hash) {
         debuglog("coin %016lx \n", coin_target);
 }
 
-	// If initial attempt fails and we have a miner version, try pragmatic top-byte variants
-	bool accepted_by_variant = false;
-	if (hash_int > user_target && have_miner_ver && client->version_mask) {
-		// small list of common top byte patterns observed in firmwares (expandable)
-		const uint32_t top_candidates[] = { 0x60000000u, 0x40000000u, 0x20000000u, 0x00000000u, 0x80000000u };
-		size_t candidates = sizeof(top_candidates)/sizeof(top_candidates[0]);
+	// If the submitted hash is too weak for the miner's current difficulty, try
+	// pragmatic version-rolling variants when miner sent a version field.
+	if(hash_int > user_target && have_miner_ver)
+	{
+		bool accepted_by_variant = false;
 
-		// backup templ->version again
-		if (templ->version && strlen(templ->version) < (sizeof(templ_version_backup)-1)) {
-			strncpy(templ_version_backup, templ->version, sizeof(templ_version_backup)-1);
-		} else templ_version_backup[0] = '\0';
-
-		for(size_t ci=0; ci < candidates; ci++) {
-			uint32_t cand = top_candidates[ci];
-			uint32_t trial_ver = (parsed_miner_ver | cand);
-
-			// apply only if those bits are allowed by the mask (i.e., client allowed rolling on those bits)
-			if ((cand & client->version_mask) == 0 && (client->version_mask != 0xFFFFFFFFu)) {
-				// candidate doesn't change any bits that miner was allowed to roll, but trying anyway is cheap.
-				// Allow trying regardless; comment out continue if you want to strictly check mask.
+		// First: if miner negotiated a version_mask, compute normalized version using template version.
+		if(client->version_mask)
+		{
+			uint32_t job_version = 0;
+			if (templ->version && templ->version[0]) {
+				job_version = (uint32_t) strtoul(templ->version, NULL, 16);
 			}
+			uint32_t normalized = (miner_ver & client->version_mask) | (job_version & ~client->version_mask);
 
-			// write trial version into templ->version
-			if (templ->version) {
-				char newver[32];
-				snprintf(newver, sizeof(newver), "%08x", trial_ver);
-				strncpy(templ->version, newver, strlen(newver)+1);
-			} else {
-				// templ->version missing — skip this candidate
-				continue;
-			}
+			if (g_debuglog_hash) debuglog("trying normalized version 0x%08x (mask 0x%08x miner 0x%08x job 0x%08x)\n",
+				normalized, client->version_mask, miner_ver, job_version);
 
-			// rebuild submitvalues with trial version
-			memset(&submitvalues, 0, sizeof(submitvalues));
-			if(is_decred)
-				build_submit_values_decred(&submitvalues, templ, client->extranonce1, extranonce2, ntime, nonce, vote, true);
-			else
-				build_submit_values(&submitvalues, templ, client->extranonce1, extranonce2, ntime, nonce);
-
-			hash_int = * (uint64_t *) &submitvalues.hash_bin[24];
-
-			if (g_debuglog_hash) {
-				debuglog("variant trial ver %08x produced hash %016lx (target %016lx)\n", trial_ver, hash_int, user_target);
-			}
-
-			if(hash_int <= user_target) {
+			if(try_variant_with_version(templ, &submitvalues, normalized, user_target)) {
 				accepted_by_variant = true;
-				if (g_debuglog_client) {
-					debuglog("accepted by variant version 0x%08x for client %s\n", trial_ver, client->sock->ip);
-				}
-				break;
+				hash_int = * (uint64_t *) &submitvalues.hash_bin[24];
 			}
 		}
 
-		// restore templ->version
-		if (templ_version_backup[0]) strncpy(templ->version, templ_version_backup, strlen(templ_version_backup)+1);
-		else templ->version[0] = '\0';
+		// Second: if still not accepted, try pragmatic high-byte candidates ORed with miner_ver.
+		if(!accepted_by_variant)
+		{
+			// pragmatic candidates observed in proxies / firmwares
+			uint32_t candidates[] = { 0x60000000u, 0x40000000u, 0x20000000u, 0x80000000u };
+			size_t nc = sizeof(candidates)/sizeof(candidates[0]);
+
+			for(size_t i=0; i<nc && !accepted_by_variant; i++)
+			{
+				uint32_t trial = (miner_ver | candidates[i]);
+				if (g_debuglog_hash) debuglog("trying pragmatic candidate 0x%08x (miner 0x%08x | cand 0x%08x)\n", trial, miner_ver, candidates[i]);
+
+				if(try_variant_with_version(templ, &submitvalues, trial, user_target)) {
+					accepted_by_variant = true;
+					hash_int = * (uint64_t *) &submitvalues.hash_bin[24];
+					break;
+				}
+			}
+		}
+
+		if(accepted_by_variant)
+		{
+			if(g_debuglog_hash) debuglog("accepted by variant, hash %016lx <= user_target %016lx\n", hash_int, user_target);
+			// proceed with submission path below using updated submitvalues
+		}
 	}
 
-	// if still low diff, reject
-	if(hash_int > user_target && !accepted_by_variant)
+	if(hash_int > user_target)
 	{
 		client_submit_error(client, job, 26, "Low difficulty share", extranonce2, ntime, nonce);
 		return true;
 	}
 
-	// If accepted_by_variant is true the submitvalues were built with the successful variant clone,
-	// so we should use those submitvalues (they are already prepared above). Otherwise use what we have.
 	if(job->coind)
 		client_do_submit(client, job, &submitvalues, extranonce2, ntime, nonce, vote);
 	else
@@ -666,3 +673,4 @@ if (g_debuglog_hash) {
 
 	return true;
 }
+
