@@ -79,6 +79,7 @@ static bool job_assign_client(YAAMP_JOB *job, YAAMP_CLIENT *client, double maxha
 		strcpy(client->extranonce1, client->extranonce1_default);
 		client->extranonce2size = client->extranonce2size_default;
 
+		// decred uses an extradata field in block header, 2 first uint32 are set by the miner
 		if (g_current_algo->name && !strcmp(g_current_algo->name,"decred")) {
 			memset(client->extranonce1, '0', sizeof(client->extranonce1));
 			memcpy(&client->extranonce1[16], client->extranonce1_default, 8);
@@ -250,6 +251,8 @@ void job_update()
 {
 	job_reset_clients();
 
+	//////////////////////////////////////////////////////////////////////////////////////////////////////
+
 	g_list_job.Enter();
 	job_sort();
 
@@ -267,6 +270,8 @@ void job_update()
 	job_unlock_clients();
 	g_list_job.Leave();
 
+	////////////////////////////////////////////////////////////////////////////////////////////////
+
 	g_list_coind.Enter();
 	coind_sort();
 
@@ -275,6 +280,8 @@ void job_update()
 	job_assign_clients_left(-1);
 
 	g_list_coind.Leave();
+
+	////////////////////////////////////////////////////////////////////////////////////////////////
 
 	g_list_client.Enter();
 	for(CLI li = g_list_client.first; li; li = li->next)
@@ -300,6 +307,8 @@ void job_update()
 
 	g_list_client.Leave();
 
+	////////////////////////////////////////////////////////////////////////////////////////////////
+
 	g_list_job.Enter();
 	for(CLI li = g_list_job.first; li; li = li->next)
 	{
@@ -311,4 +320,3 @@ void job_update()
 
 	g_list_job.Leave();
 }
-
