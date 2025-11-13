@@ -1,7 +1,4 @@
-#ifndef YAAMP_JOB_H
-#define YAAMP_JOB_H
-
-#define MAX_AUXS    32
+#define MAX_AUXS 32
 
 class YAAMP_REMOTE;
 class YAAMP_COIND;
@@ -9,106 +6,105 @@ class YAAMP_COIND_AUX;
 
 struct YAAMP_JOB_VALUES
 {
-    char coinbase[4*1024];
-    char merkleroot_be[1024];
+	char coinbase[4*1024];
+	char merkleroot_be[1024];
 
-    char header[1024];
-    char header_be[1024];
-    unsigned char header_bin[1024];
+	char header[1024];
+	char header_be[1024];
+	unsigned char header_bin[1024];
 
-    char hash_hex[1024];
-    char hash_be[1024];
-    unsigned char hash_bin[1024];
+	char hash_hex[1024];
+	char hash_be[1024];
+	unsigned char hash_bin[1024];
 };
 
 struct YAAMP_JOB_TEMPLATE
 {
-    int created;
-    char flags[64];
+	int created;
+	char flags[64];
 
-    char prevhash_hex[512];
-    char prevhash_be[512];
+	char prevhash_hex[512];
+	char prevhash_be[512];
 
-    char extradata_hex[512];
-    char extradata_be[512];
+	char extradata_hex[512];
+	char extradata_be[512];
 
-    char claim_hex[128];
-    char claim_be[128];
+	char claim_hex[128];
+	char claim_be[128];
 
-    int txcount;
-    char txmerkles[YAAMP_SMALLBUFSIZE];
+	int txcount;
+	char txmerkles[YAAMP_SMALLBUFSIZE];
 
-    vector<string> txsteps;
-    vector<string> txdata;
+	vector<string> txsteps;
+	vector<string> txdata;
 
-    char version[32];
-    char nbits[32];
-    char ntime[32];
+	char version[32];
+	char nbits[32];
+	char ntime[32];
 
-    int height;
-    int target;
+	int height;
+	int target;
 
-    json_int_t value;
+	json_int_t value;
 
-    char coinb1[4*1024];
-    char coinb2[4*1024];
-    char coinforsubmitb1[4*1024];
-    char coinforsubmitb2[4*1024];
-    bool isbitcash;
+	char coinb1[4*1024];
+	char coinb2[4*1024];
+	char coinforsubmitb1[4*1024];
+	char coinforsubmitb2[4*1024];
+	bool isbitcash;
 
-    char header[256];
+	char header[256];
 
-    bool has_segwit_txs;
+	bool has_segwit_txs;
+	bool has_filtered_txs;
+	int filtered_txs_fee;
 
-    bool has_filtered_txs;
-    int filtered_txs_fee;
+	int auxs_size;
+	YAAMP_COIND_AUX *auxs[MAX_AUXS];
 
-    int auxs_size;
-    YAAMP_COIND_AUX *auxs[MAX_AUXS];
-    
-    bool needpriceinfo;
-    char priceinfo[1024];  
+	bool needpriceinfo;
+	char priceinfo[1024];
 
-    // ==== Version rolling fields ====
-    unsigned int job_version;       // template/GBT version
-    unsigned int version_mask;      // bits miners can flip
-    bool version_rolling_allowed;   // true if mask != 0
+	// ===== Version rolling fields =====
+	unsigned int job_version;           // actual block version
+	unsigned int version_mask;          // bits allowed to roll
+	bool version_rolling_allowed;       // flag to allow ASICs to roll versions
 };
 
-#define YAAMP_JOB_MAXSUBIDS      200
+#define YAAMP_JOB_MAXSUBIDS 200
 
 class YAAMP_JOB: public YAAMP_OBJECT
 {
 public:
-    bool block_found;
-    char name[1024];
+	bool block_found;
+	char name[1024];
 
-    int count;
-    double speed;
+	int count;
+	double speed;
 
-    double maxspeed;
-    double profit;
+	double maxspeed;
+	double profit;
 
-    YAAMP_COIND *coind;         // either one of them
-    YAAMP_REMOTE *remote;
-    YAAMP_JOB_TEMPLATE *templ;
+	YAAMP_COIND *coind;
+	YAAMP_REMOTE *remote;
+	YAAMP_JOB_TEMPLATE *templ;
 
-    bool remote_subids[YAAMP_JOB_MAXSUBIDS];
+	bool remote_subids[YAAMP_JOB_MAXSUBIDS];
 
-    // ==== per-worker version rolling ====
-    unsigned int client_version_mask;
+	// ===== Version rolling for client =====
+	unsigned int client_version_mask;   // mask sent to each miner
 };
 
 inline void job_delete(YAAMP_OBJECT *object)
 {
-    YAAMP_JOB *job = (YAAMP_JOB *)object;
-    if (!job) return;
-    if (job->templ && job->templ->txcount) {
-        job->templ->txsteps.clear();
-        job->templ->txdata.clear();
-    }
-    if (job->templ) delete job->templ;
-    delete job;
+	YAAMP_JOB *job = (YAAMP_JOB *)object;
+	if (!job) return;
+	if (job->templ && job->templ->txcount) {
+		job->templ->txsteps.clear();
+		job->templ->txdata.clear();
+	}
+	if (job->templ) delete job->templ;
+	delete job;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////
@@ -138,8 +134,3 @@ void coinbase_create(YAAMP_COIND *coind, YAAMP_JOB_TEMPLATE *templ, json_value *
 vector<string> coind_aux_hashlist(YAAMP_COIND_AUX **auxs, int size);
 vector<string> coind_aux_merkle_branch(YAAMP_COIND_AUX **auxs, int size, int index);
 void coind_aux_build_auxs(YAAMP_JOB_TEMPLATE *templ);
-
-// ==== version rolling helpers ====
-void send_chip_version_rolls(YAAMP_CLIENT *client, YAAMP_JOB *job);
-
-#endif
