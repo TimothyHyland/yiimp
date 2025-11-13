@@ -28,53 +28,47 @@
 using namespace std;
 
 #include "iniparser/src/iniparser.h"
+
 #include "json.h"
 #include "util.h"
 
-#define YAAMP_RESTARTDELAY   (24*60*60)
-#define YAAMP_MAXJOBDELAY    (2*60)
-#define CURL_RPC_TIMEOUT     (30)
+#define YAAMP_RESTARTDELAY       (24*60*60)
+#define YAAMP_MAXJOBDELAY        (2*60)
+#define CURL_RPC_TIMEOUT         (30)
 
-#define YAAMP_MS             1000
-#define YAAMP_SEC            1000000
+#define YAAMP_MS                 1000
+#define YAAMP_SEC                1000000
 
-#define YAAMP_MAXALGOS       32
+#define YAAMP_MAXALGOS           32
 
 typedef void (*YAAMP_HASH_FUNCTION)(const char *, char *, uint32_t);
 
-#define YAAMP_SHAREPERSEC    10
+#define YAAMP_SHAREPERSEC        10
 
-#define YAAMP_MINDIFF        0x0000000080000000
-#define YAAMP_MAXDIFF        0x4000000000000000
+#define YAAMP_MINDIFF            0x0000000080000000
+#define YAAMP_MAXDIFF            0x4000000000000000
 
-#define YAAMP_SMALLBUFSIZE   (32*1024)
+#define YAAMP_SMALLBUFSIZE       (32*1024)
 
 #define YAAMP_NONCE_SIZE         4
 #define YAAMP_EXTRANONCE2_SIZE   4
 
-#define YAAMP_HASHLEN_STR    65
-#define YAAMP_HASHLEN_BIN    32
+#define YAAMP_HASHLEN_STR        65
+#define YAAMP_HASHLEN_BIN        32
 
-// Forward declare structures
-struct YAAMP_COIND;
-struct YAAMP_JOB;
-struct YAAMP_REMOTE;
-
-// **Remove YAAMP_CLIENT typedef here** — it’s defined in client.h
-class YAAMP_CLIENT;  // forward declaration instead
-
-extern struct CommonList g_list_coind;
-extern struct CommonList g_list_client;
-extern struct CommonList g_list_job;
-extern struct CommonList g_list_remote;
-extern struct CommonList g_list_renter;
-extern struct CommonList g_list_share;
-extern struct CommonList g_list_worker;
-extern struct CommonList g_list_block;
-extern struct CommonList g_list_submit;
-extern struct CommonList g_list_source;
+extern CommonList g_list_coind;
+extern CommonList g_list_client;
+extern CommonList g_list_job;
+extern CommonList g_list_remote;
+extern CommonList g_list_renter;
+extern CommonList g_list_share;
+extern CommonList g_list_worker;
+extern CommonList g_list_block;
+extern CommonList g_list_submit;
+extern CommonList g_list_source;
 
 extern int g_tcp_port;
+
 extern char g_tcp_server[1024];
 extern char g_tcp_password[1024];
 
@@ -129,7 +123,7 @@ extern volatile bool g_exiting;
 #include "db.h"
 #include "object.h"
 #include "socket.h"
-#include "client.h"  // YAAMP_CLIENT class lives here
+#include "client.h"
 #include "rpc.h"
 #include "job.h"
 #include "coind.h"
@@ -139,6 +133,7 @@ extern volatile bool g_exiting;
 extern YAAMP_DB *g_db;
 extern YAAMP_ALGO g_algos[];
 extern YAAMP_ALGO *g_current_algo;
+
 extern bool g_autoexchange;
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -147,15 +142,100 @@ YAAMP_ALGO *stratum_find_algo(const char *name);
 
 extern "C"
 {
-void sha256_hash(const char *input, char *output, unsigned int len);
-void sha256_double_hash(const char *input, char *output, unsigned int len);
+    void sha256_hash(const char *input, char *output, unsigned int len);
+    void sha256_double_hash(const char *input, char *output, unsigned int len);
 
-void scrypt_1024_1_1_256(const unsigned char *input, unsigned char *output);
-void scrypt_N_R_1_256(const char* input, char* output, uint32_t N, uint32_t R, uint32_t len);
+    void scrypt_1024_1_1_256(const unsigned char *input, unsigned char *output);
+    void scrypt_N_R_1_256(const char* input, char* output, uint32_t N, uint32_t R, uint32_t len);
 }
 
 void sha256_hash_hex(const char *input, char *output, unsigned int len);
 void sha256_double_hash_hex(const char *input, char *output, unsigned int len);
 
-/////////////////////////////////////////////////////////////////////////////////////////
-// **YAAMP_CLIENT removed** — use the class in client.h
+#include "algos/a5a.h"
+#include "algos/aergo.h"
+#include "algos/allium.h"
+#include "algos/argon2d.h"
+#include "algos/argon2m.h"
+#include "algos/balloon.h"
+#include "algos/bastion.h"
+#include "algos/bcd.h"
+#include "algos/bitcore.h"
+#include "algos/blake.h"
+#include "algos/blake2b.h"
+#include "algos/blake2s.h"
+#include "algos/blakecoin.h"
+#include "algos/bmw.h"
+#include "algos/bmw512.h"
+#include "algos/c11.h"
+#include "algos/dedal.h"
+#include "algos/deep.h"
+#include "algos/exosis.h"
+#include "algos/fresh.h"
+#include "algos/geek.h"
+#include "algos/gltalgos.h"
+#include "algos/groestl.h"
+#include "algos/hex.h"
+#include "algos/hmq17.h"
+#include "algos/hsr14.h"
+#include "algos/jha.h"
+#include "algos/keccak.h"
+#include "algos/lbk3.h"
+#include "algos/lbry.h"
+#include "algos/luffa.h"
+#include "algos/lyra2re.h"
+#include "algos/lyra2v2.h"
+#include "algos/lyra2v3.h"
+#include "algos/lyra2vc0ban.h"
+#include "algos/lyra2z.h"
+#include "algos/lyra2zz.h"
+#include "algos/lyra2z330.h"
+#include "algos/m7m.h"
+#include "algos/megabtx.h"
+#include "algos/megamec.h"
+#include "algos/minotaur.h"
+#include "algos/neoscrypt.h"
+#include "algos/nist5.h"
+#include "algos/pentablake.h"
+#include "algos/phi.h"
+#include "algos/phi2.h"
+#include "algos/phi1612.h"
+#include "algos/pipehash.h"
+#include "algos/polytimos.h"
+#include "algos/quark.h"
+#include "algos/qubit.h"
+#include "algos/rainforest.h"
+#include "algos/sha256q.h"
+#include "algos/sha256t.h"
+#include "algos/sib.h"
+#include "algos/skein.h"
+#include "algos/skein2.h"
+#include "algos/skunk.h"
+#include "algos/sonoa.h"
+#include "algos/timetravel.h"
+#include "algos/tribus.h"
+#include "algos/veltor.h"
+#include "algos/velvet.h"
+#include "algos/vitalium.h"
+#include "algos/whirlpool.h"
+#include "algos/whirlpoolx.h"
+#include "algos/x11.h"
+#include "algos/x11evo.h"
+#include "algos/x12.h"
+#include "algos/x13.h"
+#include "algos/x14.h"
+#include "algos/x15.h"
+#include "algos/x16r.h"
+#include "algos/x16rv2.h"
+#include "algos/x16rt.h"
+#include "algos/x16s.h"
+#include "algos/x17.h"
+#include "algos/x17r.h"
+#include "algos/x18.h"
+#include "algos/x20r.h"
+#include "algos/x21s.h"
+#include "algos/x22i.h"
+#include "algos/x25x.h"
+#include "algos/xevan.h"
+#include "algos/yespower/yespower.h"
+#include "algos/zr5.h"
