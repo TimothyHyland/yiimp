@@ -67,8 +67,10 @@ static bool job_assign_client(YAAMP_JOB *job, YAAMP_CLIENT *client, double maxha
 				RETURN_ON_CONDITION(i == YAAMP_JOB_MAXSUBIDS, false);
 			}
 
-			// safe snprintf to prevent overflow
+			/* use snprintf with size to avoid overflow/truncation warnings */
 			snprintf(client->extranonce1, sizeof(client->extranonce1), "%s%02x", remote->nonce1, client->extranonce1_id);
+			client->extranonce1[sizeof(client->extranonce1)-1] = '\0';
+
 			client->extranonce2size = remote->nonce2size-1;
 			client->difficulty_remote = difficulty_remote;
 		}
@@ -124,8 +126,9 @@ static bool job_assign_client(YAAMP_JOB *job, YAAMP_CLIENT *client, double maxha
 	}
 
 	// ===== Version rolling applied to all algos =====
+	// set client's version_mask from the template's version_mask (mask) — not job_version
 	if(job->templ->version_rolling_allowed)
-		client->version_mask = job->templ->job_version;
+		client->version_mask = job->templ->version_mask;
 	else
 		client->version_mask = 0;
 
@@ -230,6 +233,7 @@ void *job_thread(void *p)
 		job_update();
 		pthread_cond_wait(&g_job_cond, &g_job_mutex);
 	}
+	CommonUnlock(&g_job_mutex);
 	return NULL;
 }
 
