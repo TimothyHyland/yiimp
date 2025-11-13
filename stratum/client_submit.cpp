@@ -673,4 +673,3 @@ if (g_debuglog_hash) {
 
 	return true;
 }
-
