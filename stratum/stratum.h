@@ -28,39 +28,40 @@
 using namespace std;
 
 #include "iniparser/src/iniparser.h"
-
 #include "json.h"
 #include "util.h"
 
-#define YAAMP_RESTARTDELAY		(24*60*60)
-#define YAAMP_MAXJOBDELAY		(2*60)
-#define CURL_RPC_TIMEOUT		(30)
+#define YAAMP_RESTARTDELAY   (24*60*60)
+#define YAAMP_MAXJOBDELAY    (2*60)
+#define CURL_RPC_TIMEOUT     (30)
 
-#define YAAMP_MS				1000
-#define YAAMP_SEC				1000000
+#define YAAMP_MS             1000
+#define YAAMP_SEC            1000000
 
-#define YAAMP_MAXALGOS			32
+#define YAAMP_MAXALGOS       32
 
 typedef void (*YAAMP_HASH_FUNCTION)(const char *, char *, uint32_t);
 
-#define YAAMP_SHAREPERSEC		10
+#define YAAMP_SHAREPERSEC    10
 
-#define YAAMP_MINDIFF			0x0000000080000000
-#define YAAMP_MAXDIFF			0x4000000000000000
+#define YAAMP_MINDIFF        0x0000000080000000
+#define YAAMP_MAXDIFF        0x4000000000000000
 
-#define YAAMP_SMALLBUFSIZE		(32*1024)
+#define YAAMP_SMALLBUFSIZE   (32*1024)
 
-#define YAAMP_NONCE_SIZE		4
-#define YAAMP_EXTRANONCE2_SIZE	4
+#define YAAMP_NONCE_SIZE         4
+#define YAAMP_EXTRANONCE2_SIZE   4
 
-#define YAAMP_HASHLEN_STR		65
-#define YAAMP_HASHLEN_BIN		32
+#define YAAMP_HASHLEN_STR    65
+#define YAAMP_HASHLEN_BIN    32
 
 // Forward declare structures
 struct YAAMP_COIND;
-struct YAAMP_CLIENT;
 struct YAAMP_JOB;
 struct YAAMP_REMOTE;
+
+// **Remove YAAMP_CLIENT typedef here** — it’s defined in client.h
+class YAAMP_CLIENT;  // forward declaration instead
 
 extern struct CommonList g_list_coind;
 extern struct CommonList g_list_client;
@@ -128,7 +129,7 @@ extern volatile bool g_exiting;
 #include "db.h"
 #include "object.h"
 #include "socket.h"
-#include "client.h"
+#include "client.h"  // YAAMP_CLIENT class lives here
 #include "rpc.h"
 #include "job.h"
 #include "coind.h"
@@ -157,43 +158,4 @@ void sha256_hash_hex(const char *input, char *output, unsigned int len);
 void sha256_double_hash_hex(const char *input, char *output, unsigned int len);
 
 /////////////////////////////////////////////////////////////////////////////////////////
-// YAAMP_CLIENT struct
-
-typedef struct YAAMP_CLIENT
-{
-    char extranonce1[32];
-    char extranonce1_default[32];
-    char extranonce1_last[32];
-    char extranonce1_reconnect[32];
-    int extranonce1_id;
-
-    int extranonce2size;
-    int extranonce2size_default;
-    int extranonce2size_last;
-    int extranonce2size_reconnect;
-
-    double difficulty_remote;
-    double difficulty_actual;
-    double speed;
-
-    int jobid_sent;
-    int jobid_locked;
-    int jobid_next;
-
-    bool extranonce_subscribe;
-    bool reconnectable;
-    bool reconnecting;
-    bool deleted;
-    bool difficulty_fixed;
-
-    int lock_count;
-    bool unlock;
-
-    // Added for version rolling
-    uint32_t version_mask;
-
-    // Any additional fields your client may have
-} YAAMP_CLIENT;
-
-/////////////////////////////////////////////////////////////////////////////////////////
-// Other external function prototypes and structures can go here
+// **YAAMP_CLIENT removed** — use the class in client.h
