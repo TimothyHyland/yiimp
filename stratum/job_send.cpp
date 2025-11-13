@@ -28,6 +28,7 @@ static void job_mining_notify_buffer(YAAMP_JOB *job, char *buffer)
 			templ->txmerkles, version_hex, templ->nbits, templ->ntime);
 		return;
 	} else if (strlen(templ->extradata_hex) == 128) {
+		// LUX / lbry-like smart contract extra data
 		sprintf(buffer, "{\"id\":null,\"method\":\"mining.notify\",\"params\":["
 			"\"%x\",\"%s\",\"%s\",\"%s\",\"%s\",[%s],\"%s\",\"%s\",\"%s\",true]}\n",
 			job->id, templ->prevhash_be, templ->extradata_be, templ->coinb1, templ->coinb2,
@@ -153,3 +154,4 @@ void job_broadcast(YAAMP_JOB *job)
 	debuglog("%s %d - diff %.9f job %x to %d/%d/%d clients, hash %.3f/%.3f in %.1f ms\n", job->name,
 		templ->height, coin_diff, job->id, count, job->count, g_list_client.count, job->speed, job->maxspeed, 0.1*(s2-s1));
 }
+
