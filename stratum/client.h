@@ -91,6 +91,11 @@ public:
 	int jobid_next;
 	int jobid_sent;
 	int jobid_locked;
+	int lock_count;
+    bool unlock;
+
+    // --- add this field for version rolling ---
+    unsigned int version_mask;
 
 	YAAMP_CLIENT_ALGO algos_subscribed[YAAMP_MAXALGOS];
 	int job_history[YAAMP_JOB_MAXHISTORY];
