@@ -324,7 +324,8 @@ static void client_do_submit(YAAMP_CLIENT *client, YAAMP_JOB *job, YAAMP_JOB_VAL
 	free(block_hex);
 }
 
-bool dump_submit_debug(const char *title, YAAMP_CLIENT *client, YAAMP_JOB *job, char *extranonce2, char *ntime, char *nonce)
+/* changed to void to avoid missing return warning */
+void dump_submit_debug(const char *title, YAAMP_CLIENT *client, YAAMP_JOB *job, char *extranonce2, char *ntime, char *nonce)
 {
 	debuglog("ERROR %s, %s subs %d, job %x, %s, id %x, %d, %s, %s %s\n",
 		title, client->sock->ip, client->extranonce_subscribe, job? job->id: 0, client->extranonce1,
@@ -458,7 +459,7 @@ bool client_submit(YAAMP_CLIENT *client, json_value *json_params)
 	uint32_t miner_ver = 0;
 	if (json_params->u.array.length >= 6 && json_is_string(json_params->u.array.values[5])) {
 		const char *sixth = json_params->u.array.values[5]->u.string.ptr;
-		if (sixth && strlen(sixth) == 8 && ishexa(sixth, 8)) {
+		if (sixth && strlen(sixth) == 8 && ishexa((char*)sixth, 8)) {
 			// treat this as miner version
 			have_miner_ver = true;
 			miner_ver = (uint32_t) strtoul(sixth, NULL, 16);
@@ -502,14 +503,14 @@ bool client_submit(YAAMP_CLIENT *client, json_value *json_params)
 
 	YAAMP_JOB_TEMPLATE *templ = job->templ;
 
-	if(strlen(nonce) != YAAMP_NONCE_SIZE*2 || !ishexa(nonce, YAAMP_NONCE_SIZE*2)) {
+	if(strlen(nonce) != YAAMP_NONCE_SIZE*2 || !ishexa((char*)nonce, YAAMP_NONCE_SIZE*2)) {
 		client_submit_error(client, job, 20, "Invalid nonce size", extranonce2, ntime, nonce);
 		return true;
 	}
 
 	if(strcmp(ntime, templ->ntime))
 	{
-		if (!ishexa(ntime, 8)) {
+		if (!ishexa((char*)ntime, 8)) {
 			client_submit_error(client, job, 23, "Invalid ntime", extranonce2, ntime, nonce);
 			return true;
 		}
@@ -556,7 +557,7 @@ bool client_submit(YAAMP_CLIENT *client, json_value *json_params)
 			return true;
 		}
 	}
-	else if(!ishexa(extranonce2, client->extranonce2size*2)) {
+	else if(!ishexa((char*)extranonce2, client->extranonce2size*2)) {
 		client_submit_error(client, job, 27, "Invalid nonce2", extranonce2, ntime, nonce);
 		return true;
 	}
